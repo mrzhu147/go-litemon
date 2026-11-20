@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,14 +31,12 @@ type Metrics struct {
 	TS        int64    `json:"ts"`
 	Host      string   `json:"host"`
 	CPU       float64  `json:"cpu"`
-	CPUTemp   *float64 `json:"cpuTemp"`
 	Mem       float64  `json:"mem"`
 	MemUsed   uint64   `json:"memUsed"`
 	MemTotal  uint64   `json:"memTotal"`
 	Load1     float64  `json:"load1"`
 	GPUName   string   `json:"gpuName"`
 	GPU       *float64 `json:"gpu"`
-	GPUTemp   *float64 `json:"gpuTemp"`
 	GPUMemPct *float64 `json:"gpuMem"`
 	ReadBps   float64  `json:"readBps"`
 	WriteBps  float64  `json:"writeBps"`
@@ -60,6 +59,11 @@ var realFs = map[string]bool{
 var skipMountPrefix = []string{
 	"/proc", "/sys", "/dev", "/run", "/snap", "/var/lib/docker",
 	"/var/lib/kubelet", "/var/lib/containerd", "/boot/efi",
+}
+
+func (m Metrics) JSON() string {
+	b, _ := json.MarshalIndent(m, "", "  ")
+	return string(b)
 }
 
 type Collector struct {
@@ -92,6 +96,9 @@ func (c *Collector) Run(ctx context.Context, interval time.Duration) {
 	}
 }
 
+// CollectNow 立即采样一次（截图/自检用）
+func (c *Collector) CollectNow() { c.collect(1500 * time.Millisecond) }
+
 func (c *Collector) Snapshot() Metrics {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -116,7 +123,6 @@ func (c *Collector) collect(interval time.Duration) {
 	if l := readLoad1(); l >= 0 {
 		m.Load1 = round2(l)
 	}
-	m.CPUTemp = readCPUTemp()
 
 	// 网络速率（所有非回环网卡合计）
 	if cs, err := net.IOCounters(false); err == nil && len(cs) > 0 {
@@ -187,12 +193,10 @@ func (c *Collector) collect(interval time.Duration) {
 	if g, ok := readNvidia(); ok {
 		m.GPUName = g.name
 		m.GPU = g.util
-		m.GPUTemp = g.temp
 		m.GPUMemPct = g.memPct
 	} else if g, ok := readAMDGPU(); ok {
 		m.GPUName = g.name
 		m.GPU = g.util
-		m.GPUTemp = g.temp
 	} else {
 		m.GPUName = gpuNameFromDRM()
 	}
@@ -233,60 +237,9 @@ func readLoad1() float64 {
 	return v
 }
 
-// 从 /sys/class/thermal 里取最高温度（CPU 封装通常是最高的那个）
-func readCPUTemp() *float64 {
-	dirs, err := filepath.Glob("/sys/class/thermal/thermal_zone*")
-	if err != nil || len(dirs) == 0 {
-		return nil
-	}
-	var best float64
-	found := false
-	for _, d := range dirs {
-		b, err := os.ReadFile(filepath.Join(d, "temp"))
-		if err != nil {
-			continue
-		}
-		v, err := strconv.ParseFloat(strings.TrimSpace(string(b)), 64)
-		if err != nil || v <= 0 {
-			continue
-		}
-		c := v
-		if c > 1000 { // 毫度
-			c = c / 1000
-		}
-		if !found || c > best {
-			best, found = c, true
-		}
-	}
-	if !found {
-		// 兜底：hwmon（coretemp / k10temp / zenpower）
-		if hw, err := filepath.Glob("/sys/class/hwmon/hwmon*/temp*_input"); err == nil {
-			for _, f := range hw {
-				b, err := os.ReadFile(f)
-				if err != nil {
-					continue
-				}
-				v := parseF(strings.TrimSpace(string(b))) / 1000
-				if v <= 0 || v > 150 {
-					continue
-				}
-				if !found || v > best {
-					best, found = v, true
-				}
-			}
-		}
-	}
-	if !found {
-		return nil
-	}
-	r := round1(best)
-	return &r
-}
-
 type gpuStat struct {
 	name   string
 	util   *float64
-	temp   *float64
 	memPct *float64
 }
 
@@ -309,14 +262,13 @@ func readNvidia() (gpuStat, bool) {
 		return gpuStat{}, false
 	}
 	u := round1(parseF(parts[1]))
-	t := round1(parseF(parts[2]))
 	used, total := parseF(parts[3]), parseF(parts[4])
 	var mp *float64
 	if total > 0 {
 		v := round1(used / total * 100)
 		mp = &v
 	}
-	return gpuStat{name: strings.TrimSpace(parts[0]), util: &u, temp: &t, memPct: mp}, true
+	return gpuStat{name: strings.TrimSpace(parts[0]), util: &u, memPct: mp}, true
 }
 
 func readAMDGPU() (gpuStat, bool) {
@@ -325,12 +277,7 @@ func readAMDGPU() (gpuStat, bool) {
 		return gpuStat{}, false
 	}
 	u := round1(parseF(strings.TrimSpace(string(busy))))
-	g := gpuStat{name: gpuNameFromDRM(), util: &u}
-	if b, err := os.ReadFile("/sys/class/drm/card0/device/hwmon/hwmon0/temp1_input"); err == nil {
-		t := round1(parseF(strings.TrimSpace(string(b))) / 1000)
-		g.temp = &t
-	}
-	return g, true
+	return gpuStat{name: gpuNameFromDRM(), util: &u}, true
 }
 
 func gpuNameFromDRM() string {

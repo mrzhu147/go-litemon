@@ -1,102 +1,83 @@
 # go-litemon
 
-轻量级 Linux 性能监视面板 —— 单个 Go 二进制，**透明背景**，可直接当桌面挂件 / OBS 浏览器源。
+轻量性能面板，**原生 Qt5 桌面挂件**（QWidget + QPainter 直接绘制，不含任何浏览器/WebEngine）。
+透明无边框，浮在 UOS / Deepin / KDE 等 Qt 桌面上，右键菜单可开关开机自启。
 
-![panel](https://img.shields.io/badge/panel-transparent-4ade80) ![go](https://img.shields.io/badge/go-1.22+-00ADD8) ![cgo](https://img.shields.io/badge/cgo-none-success)
+![panel](screenshot.png)
 
-## 功能
+## 特性
 
-| 指标 | 说明 |
+| 项 | 说明 |
 |---|---|
-| CPU 使用率 / 负载 | gopsutil 采样，2s 一跳 |
-| CPU 温度 | `/sys/class/thermal` → `hwmon` 兜底；无传感器显示 `N/A` |
-| 内存 | 使用率 + used/total |
-| GPU 使用率 / 温度 / 显存 | 优先 `nvidia-smi`，其次 AMD `gpu_busy_percent`，都没有显示 `N/A` |
-| 磁盘读写速率 | `/proc/diskstats` 增量，KB/s → 自动进位 |
-| 网络上行 / 下行 | 非回环网卡合计，B/s |
-| 磁盘空间 | **一行汇总总容量**（used/total + 百分比 + 进度条），不显示挂载点明细；等宽数字右对齐 |
-| 自启开关 | 面板右上角按钮，一键 `systemctl enable/disable` |
+| 渲染方式 | **原生 Qt5 Widgets**（`libQt5Widgets`），无 HTML/JS/WebView |
+| 窗口 | 透明背景（`WA_TranslucentBackground`）、无边框、置顶、可拖动、记住位置的最后一帧不落盘 |
+| 指标 | CPU%、内存%、负载、读/写速率、网速（↑/↓）、磁盘总空间（单行：进度条 + 百分比 + used/total） |
+| 温度 | **不采集、不显示** |
+| GPU | 有 `nvidia-smi` 或 AMD `gpu_busy_percent` 时显示 GPU%/显存%，否则 `N/A` |
+| 自启 | 右键菜单「开机自启」→ 写/删 `~/.config/autostart/go-litemon.desktop`（XDG，桌面级自启） |
+| 采集 | gopsutil（cpu/mem/disk/net）＋ `/sys`，纯 Go，无 cgo 采集依赖 |
 
-## 快速开始
+## 编译
+
+依赖：Go 1.21+、g++、Qt5 开发包（UOS/Deepin：`libqt5widgets5` + `qt5-devel`/`qtbase5-dev`）、`pkg-config`。
 
 ```bash
-# 编译（无 cgo，产物可直接拷到别的机器）
-make build            # 或 CGO_ENABLED=0 go build -o go-litemon .
+# Debian/UOS 系
+sudo apt install -y g++ pkg-config qtbase5-dev     # 或 dnf install qt5-qtbase-devel
 
-# 运行（默认只监听回环）
-./go-litemon --listen 0.0.0.0:9527
-
-# 浏览器打开
-http://<本机IP>:9527/
+make build          # CGO_ENABLED=1 go build -o go-litemon .
 ```
 
-参数：
+产物 `go-litemon` 约 4 MB，**动态链接系统 Qt5**（目标机需有 `libQt5Widgets.so.5`，UOS 桌面默认就有）：
 
-| 参数 | 默认 | 说明 |
+```bash
+ldd go-litemon | grep Qt5      # 期望能看到 libQt5Widgets/libQt5Gui/libQt5Core
+```
+
+## 运行
+
+```bash
+./go-litemon                       # 默认右上角，620x176，2s 刷新
+./go-litemon -x 20 -y 20           # 指定位置
+./go-litemon -w 700 -h 190         # 自定义尺寸
+./go-litemon -interval 1s          # 采集间隔
+```
+
+交互：
+
+- **拖动**：按住左键拖动面板；
+- **右键**：菜单「开机自启」（勾选即写入 `~/.config/autostart/`）、「退出」。
+
+## 自检（无桌面环境也能验证）
+
+```bash
+./go-litemon --dump                # 打印一帧 JSON 指标
+QT_QPA_PLATFORM=offscreen ./go-litemon --screenshot out.png   # 离屏渲染一张面板图
+```
+
+`screenshot.png` 就是这么生成的（本机 UOS Server 无 X11，用 offscreen 平台渲染）。
+
+## 与旧版（浏览器面板）的差别
+
+| | 旧版 | 现在 |
 |---|---|---|
-| `--listen` | `127.0.0.1:9527` | 监听地址，`0.0.0.0:9527` 供局域网访问 |
-| `--interval` | `2s` | 采集间隔 |
-
-## 透明面板
-
-- 页面 `html/body` 就是 `background: transparent`，默认**完全透明**，只有文字和进度条叠在你的桌面/视频上；
-- 想要一层毛玻璃底：`http://<ip>:9527/?panel=0.45`（0–1 之间，越大越不透明）；
-- 作为 OBS「浏览器源」添加即可，宽高随窗口自适应（`min(760px, 100%)`）。
-
-## 自启按钮
-
-面板右上角按钮直接调 `POST /api/autostart {"enable":true|false}`：
-
-- 开启：写 `/etc/systemd/system/go-litemon.service`（`ExecStart=<当前二进制绝对路径> --listen 0.0.0.0:9527`）→ `daemon-reload` → `enable --now`；
-- 关闭：`disable --now` → 删除 unit → `daemon-reload`；
-- **需要 root**：非 root 运行时按钮会返回明确错误（`需要 root 权限写入 /etc/systemd/system/...`）。
-
-也可以用 API 直接控制：
-
-```bash
-curl -s http://127.0.0.1:9527/api/autostart
-curl -s -X POST http://127.0.0.1:9527/api/autostart -H 'Content-Type: application/json' -d '{"enable":true}'
-```
-
-## API
-
-`GET /api/metrics`
-
-```json
-{
-  "ts": 1795191820, "host": "cloudrive2",
-  "cpu": 46.3, "cpuTemp": null, "mem": 14.9, "memUsed": 10018947072, "memTotal": 67141197824,
-  "load1": 6.67,
-  "gpuName": "N/A", "gpu": null, "gpuTemp": null, "gpuMem": null,
-  "readBps": 0, "writeBps": 379.5,
-  "upBps": 1406642, "downBps": 1609455,
-  "diskUsed": 2326140538880, "diskTotal": 3301242560512, "diskPercent": 70.5,
-  "disks": [
-    {"mount": "/", "fsType": "xfs", "used": 64542474240, "total": 81353875456, "percent": 79.3},
-    {"mount": "/boot", "fsType": "xfs", "used": 120274944, "total": 204111872, "percent": 58.9}
-  ]
-}
-```
-
-`GET /api/autostart` / `POST /api/autostart`
-
-## 设计要点
-
-- **零 cgo**：`CGO_ENABLED=0` 编出 5.4MB 静态二进制，扔到任何 Linux 都能跑；
-- **速率靠增量**：网络/磁盘速率都用两次采样的差值除以真实间隔，首帧不输出假数据；
-- **磁盘聚合**：只统计 ext4/xfs/btrfs/zfs/vfat/ntfs/nfs/cifs 等真实块设备（跳过 `/proc /sys /dev /run /var/lib/docker`），**按设备去重后汇总成一行总容量**；面板不再逐个挂载点渲染，`/api/metrics` 里仍保留 `disks` 明细字段供二次开发；
-- **对齐靠 CSS 网格**：磁盘行固定四列 `70px / 1fr / 52px / 132px`，数字统一 `font-variant-numeric: tabular-nums`，容量列右对齐——挂载点名字多长都不会错位。
+| 形态 | Go HTTP 服务 + HTML/JS 页面 | **单个 Qt 桌面程序** |
+| 依赖 | 任意浏览器 | 系统 Qt5 运行库 |
+| 自启 | systemd unit（系统级） | `~/.config/autostart/*.desktop`（桌面级） |
+| 温度 | 显示 CPU/GPU 温度 | **已移除** |
+| 磁盘 | 逐挂载点列表 | **单行总容量** |
 
 ## 目录
 
 ```
 go-litemon/
-├── main.go          # HTTP 服务、路由、静态文件
-├── collect.go       # 指标采集（gopsutil + /sys + nvidia-smi）
-├── autostart.go     # systemd 自启开关
-├── web/index.html   # 透明面板（原生 JS，无构建）
+├── main.go        # 程序入口：Qt 初始化、采集循环、CLI
+├── collect.go     # 指标采集（gopsutil + /sys）
+├── widget.h       # Go ↔ C++ 的 C ABI
+├── widget.cpp     # Qt5 面板绘制、拖动、右键菜单、XDG 自启
+├── screenshot.png # 离屏渲染实拍
 ├── Makefile
-└── go.mod
+└── go.mod / go.sum
 ```
 
 ## License
