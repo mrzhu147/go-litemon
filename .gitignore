@@ -1,0 +1,4 @@
+/go-litemon
+/dist/
+*.log
+.DS_Store
