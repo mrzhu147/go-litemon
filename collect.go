@@ -43,7 +43,11 @@ type Metrics struct {
 	WriteBps  float64  `json:"writeBps"`
 	UpBps     float64  `json:"upBps"`
 	DownBps   float64  `json:"downBps"`
-	Disks     []Disk   `json:"disks"`
+	// 磁盘总容量（按设备去重后汇总，1 个块设备只算一次）
+	DiskUsed    uint64  `json:"diskUsed"`
+	DiskTotal   uint64  `json:"diskTotal"`
+	DiskPercent float64 `json:"diskPercent"`
+	Disks       []Disk  `json:"disks"`
 }
 
 // 只统计真实块设备，过滤虚拟文件系统
@@ -160,6 +164,15 @@ func (c *Collector) collect(interval time.Duration) {
 			})
 		}
 	}
+	// 汇总（已按 device 去重，不会把同一块盘的多个挂载点重复累加）
+	for _, d := range m.Disks {
+		m.DiskUsed += d.Used
+		m.DiskTotal += d.Total
+	}
+	if m.DiskTotal > 0 {
+		m.DiskPercent = round1(float64(m.DiskUsed) / float64(m.DiskTotal) * 100)
+	}
+
 	sort.Slice(m.Disks, func(i, j int) bool {
 		if m.Disks[i].Mount == "/" {
 			return true

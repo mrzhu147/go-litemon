@@ -14,7 +14,7 @@
 | GPU 使用率 / 温度 / 显存 | 优先 `nvidia-smi`，其次 AMD `gpu_busy_percent`，都没有显示 `N/A` |
 | 磁盘读写速率 | `/proc/diskstats` 增量，KB/s → 自动进位 |
 | 网络上行 / 下行 | 非回环网卡合计，B/s |
-| 磁盘容量 | 每个真实挂载点一行：**进度条 + 百分比 + used/total**，等宽数字自动右对齐 |
+| 磁盘空间 | **一行汇总总容量**（used/total + 百分比 + 进度条），不显示挂载点明细；等宽数字右对齐 |
 | 自启开关 | 面板右上角按钮，一键 `systemctl enable/disable` |
 
 ## 快速开始
@@ -70,6 +70,7 @@ curl -s -X POST http://127.0.0.1:9527/api/autostart -H 'Content-Type: applicatio
   "gpuName": "N/A", "gpu": null, "gpuTemp": null, "gpuMem": null,
   "readBps": 0, "writeBps": 379.5,
   "upBps": 1406642, "downBps": 1609455,
+  "diskUsed": 2326140538880, "diskTotal": 3301242560512, "diskPercent": 70.5,
   "disks": [
     {"mount": "/", "fsType": "xfs", "used": 64542474240, "total": 81353875456, "percent": 79.3},
     {"mount": "/boot", "fsType": "xfs", "used": 120274944, "total": 204111872, "percent": 58.9}
@@ -83,7 +84,7 @@ curl -s -X POST http://127.0.0.1:9527/api/autostart -H 'Content-Type: applicatio
 
 - **零 cgo**：`CGO_ENABLED=0` 编出 5.4MB 静态二进制，扔到任何 Linux 都能跑；
 - **速率靠增量**：网络/磁盘速率都用两次采样的差值除以真实间隔，首帧不输出假数据；
-- **磁盘过滤**：只统计 ext4/xfs/btrfs/zfs/vfat/ntfs/nfs/cifs 等真实块设备，跳过 `/proc /sys /dev /run /var/lib/docker` 这类噪音；
+- **磁盘聚合**：只统计 ext4/xfs/btrfs/zfs/vfat/ntfs/nfs/cifs 等真实块设备（跳过 `/proc /sys /dev /run /var/lib/docker`），**按设备去重后汇总成一行总容量**；面板不再逐个挂载点渲染，`/api/metrics` 里仍保留 `disks` 明细字段供二次开发；
 - **对齐靠 CSS 网格**：磁盘行固定四列 `70px / 1fr / 52px / 132px`，数字统一 `font-variant-numeric: tabular-nums`，容量列右对齐——挂载点名字多长都不会错位。
 
 ## 目录

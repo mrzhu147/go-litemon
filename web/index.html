@@ -57,10 +57,11 @@
   .up{color:var(--good)} .down{color:var(--fg)}
 
   /* 磁盘区：名称 | 进度条 | 百分比 | 容量（右对齐等宽数字）*/
+  /* 磁盘：只显示总空间一行，四列固定，容量列右对齐 */
   .disks{margin-top:11px;display:grid;grid-template-columns:1fr;row-gap:5px}
   .diskrow{
     display:grid;
-    grid-template-columns:70px 1fr 52px 132px;   /* 四列固定，容量列右对齐 */
+    grid-template-columns:70px 1fr 52px 150px;
     align-items:center; column-gap:12px;
   }
   .mnt{color:var(--dim);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -100,7 +101,14 @@
       <span class="k"></span><span></span>
     </div>
 
-    <div class="disks" id="disks"></div>
+    <div class="disks">
+      <div class="diskrow">
+        <span class="mnt">磁盘</span>
+        <span class="bar"><i id="diskBar" class="g" style="width:0%"></i></span>
+        <span class="pct" id="diskPct">--</span>
+        <span class="cap" id="diskCap">-- / --</span>
+      </div>
+    </div>
     <div class="foot"><span id="ts">--</span><span id="hint">面板透明 · 可直接作为浏览器源叠在桌面/OBS 上</span></div>
   </div>
 
@@ -172,18 +180,14 @@ function render(d) {
   $("down").textContent = humanKBps(d.downBps / 1024) + "/s";
   $("ts").textContent = new Date(d.ts * 1000).toLocaleTimeString();
 
-  const box = $("disks");
-  box.innerHTML = "";
-  (d.disks || []).forEach((k) => {
-    const row = document.createElement("div");
-    row.className = "diskrow";
-    row.innerHTML = `
-      <span class="mnt" title="${k.mount} (${k.fsType})">${k.mount}</span>
-      <span class="bar"><i class="${color(k.percent)}" style="width:${Math.min(k.percent, 100)}%"></i></span>
-      <span class="pct ${k.percent >= 88 ? "r" : k.percent >= 70 ? "y" : ""}">${k.percent.toFixed(0)}%</span>
-      <span class="cap">${humanBytes(k.used)} / ${humanBytes(k.total)}</span>`;
-    box.appendChild(row);
-  });
+  // 磁盘：只显示总空间（不列挂载点）
+  const dp = d.diskPercent ?? null;
+  const bar = $("diskBar");
+  bar.className = color(dp);
+  bar.style.width = Math.min(dp || 0, 100) + "%";
+  $("diskPct").textContent = dp == null ? "N/A" : dp.toFixed(0) + "%";
+  $("diskPct").className = "pct " + (dp >= 88 ? "r" : dp >= 70 ? "y" : "");
+  $("diskCap").textContent = humanBytes(d.diskUsed || 0) + " / " + humanBytes(d.diskTotal || 0);
 }
 
 async function tick() {
